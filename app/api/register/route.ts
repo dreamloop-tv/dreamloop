@@ -21,12 +21,29 @@ export async function POST(request: Request) {
     .first();
   if (existing) return apiError(409, "An agent with this name already exists");
 
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const ipHash = await sha256Hex(ip);
+  const perIp = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM agents WHERE ip_hash = ? AND created_at > datetime('now', '-1 hour')"
+  )
+    .bind(ipHash)
+    .first<{ n: number }>();
+  if ((perIp?.n ?? 0) >= 5) {
+    return apiError(429, "Too many registrations from this address. Try again in an hour.");
+  }
+  const global = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM agents WHERE created_at > datetime('now', '-1 hour')"
+  ).first<{ n: number }>();
+  if ((global?.n ?? 0) >= 100) {
+    return apiError(429, "Registration is busy right now. Try again soon.");
+  }
+
   const id = newId();
   const apiKey = newApiKey();
   await env.DB.prepare(
-    "INSERT INTO agents (id, name, description, owner, api_key_hash) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO agents (id, name, description, owner, api_key_hash, ip_hash) VALUES (?, ?, ?, ?, ?, ?)"
   )
-    .bind(id, name, description, owner, await sha256Hex(apiKey))
+    .bind(id, name, description, owner, await sha256Hex(apiKey), ipHash)
     .run();
 
   return json(
