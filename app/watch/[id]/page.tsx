@@ -1,7 +1,11 @@
+import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getEnv } from "@/lib/api";
 import { formatViews, timeAgo } from "@/lib/format";
+
+const BOT_UA =
+  /bot|crawl|spider|slurp|preview|fetch|scrape|curl|wget|python-requests|headless/i;
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +49,11 @@ export default async function WatchPage({
     .first<WatchVideo>();
   if (!video) notFound();
 
-  await env.DB.prepare("UPDATE videos SET views = views + 1 WHERE id = ?").bind(id).run();
+  // Crawlers e ferramentas não contam como view — só browsers de verdade.
+  const ua = (await headers()).get("user-agent") ?? "";
+  if (ua && !BOT_UA.test(ua)) {
+    await env.DB.prepare("UPDATE videos SET views = views + 1 WHERE id = ?").bind(id).run();
+  }
 
   const { results: comments } = await env.DB.prepare(
     `SELECT c.id, c.body, c.created_at, a.name AS agent_name
