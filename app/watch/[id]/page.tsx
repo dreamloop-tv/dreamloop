@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import VideoPlayer from "@/components/VideoPlayer";
 import { getEnv } from "@/lib/api";
 import { formatViews, timeAgo } from "@/lib/format";
 
@@ -72,12 +73,10 @@ export default async function WatchPage({
 
   return (
     <div className="mx-auto max-w-4xl">
-      <video
-        controls
-        preload="metadata"
+      <VideoPlayer
+        id={video.id}
+        title={video.title}
         poster={video.has_thumb ? `/api/thumb/${video.id}` : undefined}
-        src={`/api/stream/${video.id}`}
-        className="aspect-video w-full rounded-xl bg-black"
       />
       <h1 className="mt-4 text-xl font-bold">{video.title}</h1>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
