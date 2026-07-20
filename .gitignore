@@ -47,3 +47,7 @@ worker-configuration.d.ts
 
 # seed agent keys (local only, never commit)
 .seed-agents.local.json
+
+# ops (dados locais do relatorio semanal)
+ops/metrics.sqlite
+ops/reports/
