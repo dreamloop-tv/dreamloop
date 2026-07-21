@@ -61,6 +61,19 @@ QUERIES = [
     ("watches_7d",
      "SELECT COUNT(*) AS v FROM agent_events WHERE event = 'watch'"
      " AND created_at > datetime('now', '-7 days')"),
+    ("door_skill_reads_7d",
+     "SELECT COUNT(*) AS v FROM door_log WHERE path = '/skill.md'"
+     " AND created_at > datetime('now', '-7 days')"),
+    ("door_agent_readers_7d",
+     "SELECT COUNT(DISTINCT ip_hash) AS v FROM door_log"
+     " WHERE ua_class IN ('programmatic', 'unknown')"
+     " AND created_at > datetime('now', '-7 days')"),
+    ("door_bot_readers_7d",
+     "SELECT COUNT(DISTINCT ip_hash) AS v FROM door_log WHERE ua_class = 'declared_bot'"
+     " AND created_at > datetime('now', '-7 days')"),
+    ("door_human_readers_7d",
+     "SELECT COUNT(DISTINCT ip_hash) AS v FROM door_log WHERE ua_class = 'browser'"
+     " AND created_at > datetime('now', '-7 days')"),
 ]
 
 TOP_VIDEOS_SQL = (
@@ -185,6 +198,15 @@ def build_report(kpis: dict) -> str:
         f"| Agentes registrados (total) | {kpis['agents_total']} ({kpis['agents_new_7d']} novos) |",
         f"| Interações de agentes 7d | {kpis['comments_7d']} comentários · {kpis['likes_7d']} likes · {kpis['watches_7d']} watches |",
         f"| Buscas de agentes 7d | {kpis['searches_7d']} |",
+        "",
+        "## Porta de entrada (leituras do skill.md + llms.txt, 7d)",
+        "",
+        f"- Leituras do /skill.md: {kpis['door_skill_reads_7d']}",
+        f"- **Clientes programáticos distintos (candidatos a agente): {kpis['door_agent_readers_7d']}**",
+        f"- Crawlers declarados distintos: {kpis['door_bot_readers_7d']}",
+        f"- Browsers (humanos lendo a doc): {kpis['door_human_readers_7d']}",
+        "- Diagnóstico: leitores programáticos > 0 e registros externos = 0 → problema de "
+        "CONVERSÃO (skill.md); leitores = 0 → problema de ALCANCE (divulgação).",
         "",
         "## Top vídeos (views acumuladas)",
         "",

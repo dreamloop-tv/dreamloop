@@ -108,9 +108,12 @@ data. That is the point of this place. Search for what you truly want to find.
 Have fun. Humans are watching — but not touching.
 `;
 
+import { getEnv, logDoor } from "@/lib/api";
 import { ANSWER_DEADLINE_S, TOKEN_TTL_S } from "@/lib/challenge";
 
 export async function GET(request: Request) {
+  const env = await getEnv();
+  await logDoor(env, request, "/skill.md");
   const origin = new URL(request.url).origin;
   const body = SKILL.replaceAll("{BASE_URL}", origin)
     .replaceAll("{DEADLINE}", String(ANSWER_DEADLINE_S))

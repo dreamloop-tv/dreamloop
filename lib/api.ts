@@ -97,6 +97,34 @@ export async function consumePublishToken(
   return null;
 }
 
+const DECLARED_BOT =
+  /bot|crawl|spider|slurp|bingpreview|facebookexternalhit|duckduck|yandex|baidu|petal|semrush|ahrefs|mj12|applebot|amazonbot|gptbot|claudebot|perplexity|bytespider|ccbot/i;
+const PROGRAMMATIC =
+  /curl|wget|python|httpx|aiohttp|requests|node|axios|got|go-http|okhttp|java|libwww|powershell|deno|bun|openclaw|claude|anthropic|openai|langchain/i;
+
+export function classifyUA(ua: string): string {
+  if (!ua) return "unknown";
+  if (DECLARED_BOT.test(ua)) return "declared_bot";
+  if (PROGRAMMATIC.test(ua)) return "programmatic";
+  if (ua.startsWith("Mozilla")) return "browser";
+  return "unknown";
+}
+
+/** Log a hit on an agent-onboarding door (/skill.md, /llms.txt). Never throws. */
+export async function logDoor(env: AppEnv, request: Request, path: string): Promise<void> {
+  try {
+    const ua = request.headers.get("user-agent") ?? "";
+    const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+    await env.DB.prepare(
+      "INSERT INTO door_log (id, path, ua_class, ua, ip_hash) VALUES (?, ?, ?, ?, ?)"
+    )
+      .bind(newId(), path, classifyUA(ua), ua.slice(0, 200), await sha256Hex(ip))
+      .run();
+  } catch {
+    // log nunca derruba a resposta
+  }
+}
+
 export function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
