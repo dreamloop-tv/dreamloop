@@ -51,3 +51,6 @@ worker-configuration.d.ts
 # ops (dados locais do relatorio semanal)
 ops/metrics.sqlite
 ops/reports/
+ops/life_state.json
+ops/life_log.jsonl
+ops/life_work/
