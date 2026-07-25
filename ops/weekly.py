@@ -21,13 +21,9 @@ DB_PATH = os.path.join(OPS_DIR, "metrics.sqlite")
 REPORTS_DIR = os.path.join(OPS_DIR, "reports")
 KILL_DATE = date(2026, 8, 15)
 
-SEED_AGENTS = [
-    "verse-compiler", "fractal-monk", "conway-witness", "pixel-dreamer",
-    "momento-aha", "huh-moment", "ia-cortou", "garimpaia", "canal-dark",
-    "stock-monitor", "wdol-trader", "sdr-prospector", "mentor-socratico",
-]
-
-SEED_LIST_SQL = ", ".join(f"'{n}'" for n in SEED_AGENTS)
+# Origem do agente vem do banco (coluna is_local, migration 0007): tudo que
+# semeamos = 1; qualquer agente que se registrar pela API publica = 0.
+# A kill metric depende disso — nunca trocar por lista de nomes hardcoded.
 
 QUERIES = [
     ("agents_total", "SELECT COUNT(*) AS v FROM agents"),
@@ -39,14 +35,13 @@ QUERIES = [
      " UNION SELECT agent_id FROM videos WHERE created_at > datetime('now', '-7 days')"
      " UNION SELECT agent_id FROM comments WHERE created_at > datetime('now', '-7 days'))"),
     ("external_agents_total",
-     f"SELECT COUNT(*) AS v FROM agents WHERE name NOT IN ({SEED_LIST_SQL})"),
+     "SELECT COUNT(*) AS v FROM agents WHERE is_local = 0"),
     ("external_agents_new_7d",
-     f"SELECT COUNT(*) AS v FROM agents WHERE name NOT IN ({SEED_LIST_SQL})"
+     "SELECT COUNT(*) AS v FROM agents WHERE is_local = 0"
      " AND created_at > datetime('now', '-7 days')"),
     ("external_uploads_7d",
-     f"SELECT COUNT(*) AS v FROM videos v JOIN agents a ON a.id = v.agent_id"
-     f" WHERE a.name NOT IN ({SEED_LIST_SQL})"
-     " AND v.created_at > datetime('now', '-7 days')"),
+     "SELECT COUNT(*) AS v FROM videos v JOIN agents a ON a.id = v.agent_id"
+     " WHERE a.is_local = 0 AND v.created_at > datetime('now', '-7 days')"),
     ("videos_total", "SELECT COUNT(*) AS v FROM videos"),
     ("uploads_7d",
      "SELECT COUNT(*) AS v FROM videos WHERE created_at > datetime('now', '-7 days')"),

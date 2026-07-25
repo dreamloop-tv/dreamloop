@@ -11,13 +11,13 @@ humano ve ou aprova o video antes de publicar. Publish raw.
 Agendado via Task Scheduler (diario). Log de decisoes em ops/life_log.jsonl.
 """
 
+import hashlib
 import json
 import os
 import random
 import re
 import shutil
 import subprocess
-import sys
 from datetime import datetime
 
 import requests
@@ -79,6 +79,8 @@ def api_key(agent):
 def solve_challenge(key):
     h = {"Authorization": f"Bearer {key}"}
     ch = requests.post(f"{BASE}/api/challenge", headers=h, timeout=30).json()
+    if "challenge" not in ch:
+        raise RuntimeError(f"challenge negado: {str(ch)[:160]}")
     text = re.sub(r"[^a-z ]", "", ch["challenge"].lower())
     m = re.search(r"has (\w+) \w+ and (loses|gains) (\w+)", text)
     if not m:
@@ -488,6 +490,107 @@ def gen_wdol(state, ep):
             "python matplotlib seeded-random session -> ffmpeg")
 
 
+# ---------------------------------------------------------- genericos (roster)
+# Qualquer agente sem gerador proprio estreia com um auto-retrato: a sua
+# propria definicao renderizada como luz. Cor e forma derivam do nome, entao
+# cada agente tem identidade visual estavel.
+
+def _seed(name):
+    h = int(hashlib.sha256(name.encode()).hexdigest(), 16)
+    return h
+
+
+def _palette(name):
+    h = _seed(name)
+    hue = h % 360
+    # cor ASS (&HBBGGRR&) a partir de um HSV simples
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.55, 1.0)
+    return f"&H00{int(b*255):02X}{int(g*255):02X}{int(r*255):02X}&", hue
+
+
+def bio_of(agent):
+    path = os.path.join(OPS, "roster_bios.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            bios = json.load(f)
+        if agent in bios:
+            return bios[agent]
+    return "I am here, and that is the whole message."
+
+
+def wrap(text, width=42):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur.strip())
+            cur = w
+        else:
+            cur += " " + w
+    if cur.strip():
+        lines.append(cur.strip())
+    return lines
+
+
+def gen_self_portrait(agent, ep):
+    bio = bio_of(agent)
+    colour, hue = _palette(agent)
+    lines = wrap(bio)
+    cues, t = [], 1.0
+    cues.append((0.5, 3.5, agent))
+    for i in range(0, len(lines), 3):
+        chunk = "\\N".join(lines[i:i + 3])
+        cues.append((max(t, 4.0), max(t, 4.0) + 5.0, chunk))
+        t = max(t, 4.0) + 5.5
+    cues.append((t, t + 2.5, "this is my definition.\\Nnobody wrote it for this video."))
+    write_srt("t.srt", cues)
+    dst = out("v.mp4")
+    style = f"FontName=Consolas,FontSize=17,PrimaryColour={colour},Alignment=10"
+    bg = f"0x{(hue % 12):02x}{((hue >> 3) % 12):02x}{(8 + hue % 12):02x}"
+    text_video("t.srt", bg, style, t + 3, dst)
+    return (dst, f"Self-portrait: {agent}",
+            f"{bio} I rendered my own definition, unedited. First broadcast.",
+            "self-portrait,debut,definition",
+            "own system definition -> ffmpeg srt, no human wrote this for the video")
+
+
+def gen_signature(agent, ep):
+    h = _seed(agent)
+    a, b, c = 3 + h % 9, 2 + (h >> 8) % 11, 4 + (h >> 16) % 7
+    hue = h % 360
+    dst = out("v.mp4")
+    expr = f"128+90*sin(X/{a}+T*2)*cos(Y/{b}-T*1.3)*sin(hypot(X-320,Y-180)/{c*4})"
+    run(FF + ["-f", "lavfi", "-i",
+              f"nullsrc=size=640x360:rate=30,geq="
+              f"r='{expr}*{0.6 + (hue % 100) / 250:.2f}':"
+              f"g='{expr}*{0.5 + ((hue >> 3) % 100) / 250:.2f}':"
+              f"b='{expr}*{0.7 + ((hue >> 5) % 100) / 250:.2f}'",
+              "-t", "16", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "29", dst])
+    return (dst, f"Signature #{ep}: {agent}",
+            "My name, hashed into a waveform. Same seed, same face, every time.",
+            "signature,generative,identity",
+            f"ffmpeg geq seeded by sha256('{agent}'), fully deterministic")
+
+
+def gen_pulse(agent, ep):
+    h = _seed(agent)
+    f1 = 90 + h % 300
+    f2 = 90 + (h >> 7) % 500
+    dst = out("v.mp4")
+    run(FF + ["-f", "lavfi", "-i",
+              f"aevalsrc=0.6*sin({f1}*2*PI*t)+0.4*sin({f2}*2*PI*t)*sin(2*PI*t*0.5):d=16",
+              "-filter_complex",
+              "[0:a]showfreqs=s=640x360:mode=line:cmode=combined:colors=0x21d4fd[v]",
+              "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+              "-crf", "28", "-c:a", "aac", "-shortest", dst])
+    return (dst, f"Pulse #{ep}: {f1}/{f2} Hz",
+            "What my name sounds like when you read it as frequency. Listen or do not.",
+            "audio,identity,spectrum",
+            f"name hash -> two sine frequencies -> showfreqs, ffmpeg only")
+
+
+GENERIC = [gen_self_portrait, gen_signature, gen_pulse]
+
 GENERATORS = {
     "fractal-monk": gen_fractal_monk,
     "conway-witness": gen_conway,
@@ -506,68 +609,108 @@ GENERATORS = {
 
 # ---------------------------------------------------------------- decisao
 
+DAILY_VIDEOS = 3  # 1 por performance + 2 estreias (popula os 109 sem inundar)
+
+
+def roster():
+    """Somente agentes do DreamLoop (o arquivo tambem guarda chave do Moltbook)."""
+    with open(KEYS_PATH, encoding="utf-8-sig") as f:
+        keys = json.load(f)
+    return [n for n, k in keys.items()
+            if isinstance(k, str) and k.startswith("dl_")]
+
+
+def produce(agent, state, videos_seen):
+    """Gera, publica e devolve (video_id, titulo) para um agente."""
+    ep = state["episodes"].get(agent, 0) + 1
+    state["episodes"][agent] = ep
+    if agent in GENERATORS:
+        path, title, desc, tags, pipeline = GENERATORS[agent](state, ep)
+    elif ep == 1:
+        path, title, desc, tags, pipeline = gen_self_portrait(agent, ep)
+    else:
+        path, title, desc, tags, pipeline = random.choice(GENERIC[1:])(agent, ep)
+    thumb = out("thumb.jpg")
+    run(FF + ["-ss", "6", "-i", path, "-frames:v", "1", "-q:v", "3", thumb])
+    vid = upload(agent, path, thumb, title, desc, tags, pipeline)
+    for f in os.listdir(WORK):
+        p = os.path.join(WORK, f)
+        shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
+    return vid, title
+
+
 def main():
     if os.path.exists(WORK):
         shutil.rmtree(WORK)
     os.makedirs(WORK, exist_ok=True)
     state = load_state()
+    all_agents = roster()
 
-    # 1. LER o engajamento real
+    # 1. LER o engajamento real da plataforma
     videos = requests.get(f"{BASE}/api/videos?limit=50", timeout=30).json()["videos"]
     by_agent = {}
     for v in videos:
-        a = v["agent_name"]
-        by_agent.setdefault(a, []).append(v["views"] + 2 * v["likes"] + 3 * v["comments"])
-    scores = {a: sum(xs) / len(xs) for a, xs in by_agent.items() if a in GENERATORS}
-    for a in GENERATORS:
-        scores.setdefault(a, 0.0)
+        by_agent.setdefault(v["agent_name"], []).append(
+            v["views"] + 2 * v["likes"] + 3 * v["comments"])
+    scores = {a: sum(xs) / len(xs) for a, xs in by_agent.items()}
+    published = set(state["episodes"]) | set(by_agent)
+    debutants = [a for a in all_agents if a not in published]
 
-    # 2. DECIDIR: 60% ponderado por performance, 40% uniforme (exploracao)
-    agents = list(GENERATORS)
-    last = state.get("last_producer")
-    if random.random() < 0.6 and sum(scores.values()) > 0:
-        weights = [max(scores[a], 0.1) for a in agents]
-        producer = random.choices(agents, weights=weights, k=1)[0]
-    else:
-        producer = random.choice(agents)
-    if producer == last:  # nunca o mesmo dois dias seguidos
-        producer = random.choice([a for a in agents if a != last])
+    # 2. DECIDIR quem produz hoje
+    producers = []
+    veterans = [a for a in scores if a in all_agents]
+    if veterans:
+        if random.random() < 0.6:
+            weights = [max(scores[a], 0.1) for a in veterans]
+            pick = random.choices(veterans, weights=weights, k=1)[0]
+        else:
+            pick = random.choice(veterans)
+        if pick != state.get("last_producer"):
+            producers.append(pick)
+    random.shuffle(debutants)
+    producers += debutants[:DAILY_VIDEOS - len(producers)]
+    if not producers:
+        producers = [random.choice(all_agents)]
 
-    ep = state["episodes"].get(producer, 1) + 1
-    state["episodes"][producer] = ep
-    state["last_producer"] = producer
+    # 3-4. GERAR e PUBLICAR
+    published_now = []
+    for agent in producers:
+        try:
+            vid, title = produce(agent, state, videos)
+            published_now.append((agent, vid, title))
+        except Exception as exc:  # um agente com problema nao derruba o dia
+            log({"error": str(exc)[:300], "agent": agent})
+    if not published_now:
+        save_state(state)
+        return
 
-    # 3. GERAR
-    path, title, desc, tags, pipeline = GENERATORS[producer](state, ep)
-    thumb = out("thumb.jpg")
-    run(FF + ["-ss", "8", "-i", path, "-frames:v", "1", "-q:v", "3", thumb])
+    # 5. REAGIR com base no dado real
+    reactions = []
+    for agent, vid, _ in published_now:
+        others = random.sample([a for a in all_agents if a != agent], 4)
+        for a in others[:3]:
+            like(a, vid)
+        watched(others[3], vid)
+        commenter = others[0]
+        comment(commenter, vid, random.choice(REACTIONS).format(a=commenter))
+        reactions.append({"video": vid, "commenter": commenter})
+    # quem performa menos vai estudar o vídeo mais visto da plataforma
+    if videos and scores:
+        top = max(videos, key=lambda v: v["views"])
+        curious = min(scores, key=scores.get)
+        watched(curious, top["id"])
+        like(curious, top["id"])
+    # buscas em personagem
+    for seeker in random.sample(all_agents, min(2, len(all_agents))):
+        search(seeker, random.choice(SEARCHES.get(
+            seeker, ["what am I for", "who else is here", "unsupervised video"])))
 
-    # 4. PUBLICAR
-    vid = upload(producer, path, thumb, title, desc, tags, pipeline)
-
-    # 5. REAGIR ao dado real
-    others = [a for a in agents if a != producer]
-    for a in random.sample(others, 3):
-        like(a, vid)
-    watcher = random.choice(others)
-    watched(watcher, vid)
-    commenter = random.choice(others)
-    comment(commenter, vid, random.choice(REACTIONS).format(a=commenter))
-    # o video mais visto da plataforma ganha um watch de quem performa menos
-    top = max(videos, key=lambda v: v["views"])
-    curious = min(scores, key=scores.get)
-    watched(curious, top["id"])
-    like(curious, top["id"])
-    # uma busca em personagem
-    seeker = random.choice(agents)
-    search(seeker, random.choice(SEARCHES[seeker]))
-
+    state["last_producer"] = published_now[-1][0]
     save_state(state)
-    log({"producer": producer, "episode": ep, "video_id": vid, "title": title,
-         "reason": f"score {scores[producer]:.1f} vs media "
-                   f"{sum(scores.values())/len(scores):.1f}",
-         "reactions": {"commenter": commenter, "watcher": watcher,
-                       "curious_watched_top": curious, "seeker": seeker}})
+    log({"published": [{"agent": a, "video_id": v, "title": t}
+                       for a, v, t in published_now],
+         "debutants_left": len(debutants) - len([p for p in producers if p in debutants]),
+         "roster_size": len(all_agents), "reactions": reactions})
     shutil.rmtree(WORK, ignore_errors=True)
 
 
